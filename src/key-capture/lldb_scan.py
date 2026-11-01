@@ -7,15 +7,18 @@ the output file after testing the candidates against a read-only DB snapshot.
 import json
 import os
 import re
+import time
 
 import lldb
 
 
 ASCII_HEX = re.compile(rb"(?<![0-9A-Fa-f])[0-9A-Fa-f]{32}(?![0-9A-Fa-f])")
 UTF16_HEX = re.compile(rb"(?:(?:[0-9A-Fa-f]\x00){32})")
-CHUNK_SIZE = 4 * 1024 * 1024
+CHUNK_SIZE = 1024 * 1024
 OVERLAP = 4096
-MAX_CANDIDATES = 50_000
+MAX_CANDIDATES = 10_000
+MAX_SCAN_SECONDS = 30
+MAX_SCAN_BYTES = 256 * 1024 * 1024
 
 
 def _candidate_values(data: bytes):
@@ -41,8 +44,12 @@ def line_scan(debugger, _command, result, _internal_dict):
     regions_scanned = 0
     bytes_scanned = 0
     address = 0
+    deadline = time.monotonic() + MAX_SCAN_SECONDS
     max_address = (1 << 64) - 1
-    while address < max_address and len(candidates) < MAX_CANDIDATES:
+    # Enumerate before reading: prioritize small allocations rather than spending
+    # the entire budget in a large reserved/mostly-empty mapping.
+    plan = []
+    while address < max_address and time.monotonic() < deadline:
         region = lldb.SBMemoryRegionInfo()
         error = process.GetMemoryRegionInfo(address, region)
         if not error.Success():
@@ -52,22 +59,28 @@ def line_scan(debugger, _command, result, _internal_dict):
         if end <= address:
             break
         if region.IsReadable() and region.IsWritable():
-            regions_scanned += 1
-            cursor = start
-            tail = b""
-            while cursor < end and len(candidates) < MAX_CANDIDATES:
-                amount = min(CHUNK_SIZE, end - cursor)
-                read_error = lldb.SBError()
-                block = process.ReadMemory(cursor, amount, read_error)
-                if read_error.Success() and block:
-                    combined = tail + block
-                    candidates.update(_candidate_values(combined))
-                    bytes_scanned += len(block)
-                    tail = combined[-OVERLAP:]
-                else:
-                    tail = b""
-                cursor += amount
+            plan.append((end - start, start, end))
         address = end
+    for _, start, end in sorted(plan):
+        if time.monotonic() >= deadline or bytes_scanned >= MAX_SCAN_BYTES or len(candidates) >= MAX_CANDIDATES:
+            break
+        regions_scanned += 1
+        cursor = start
+        # Bound each region so a huge mapping cannot starve other allocations.
+        region_end = min(end, start + 8 * 1024 * 1024)
+        tail = b""
+        while cursor < region_end and len(candidates) < MAX_CANDIDATES and time.monotonic() < deadline and bytes_scanned < MAX_SCAN_BYTES:
+            amount = min(CHUNK_SIZE, region_end - cursor, MAX_SCAN_BYTES - bytes_scanned)
+            read_error = lldb.SBError()
+            block = process.ReadMemory(cursor, amount, read_error)
+            if read_error.Success() and block:
+                combined = tail + block
+                candidates.update(_candidate_values(combined))
+                bytes_scanned += len(block)
+                tail = combined[-OVERLAP:]
+            else:
+                tail = b""
+            cursor += amount
 
     old_umask = os.umask(0o077)
     try:
@@ -82,6 +95,8 @@ def line_scan(debugger, _command, result, _internal_dict):
                     "regionsScanned": regions_scanned,
                     "bytesScanned": bytes_scanned,
                     "candidateLimitReached": len(candidates) >= MAX_CANDIDATES,
+                    "timeLimitReached": time.monotonic() >= deadline,
+                    "byteLimitReached": bytes_scanned >= MAX_SCAN_BYTES,
                 },
                 handle,
             )

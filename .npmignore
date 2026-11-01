@@ -1,0 +1,13 @@
+**/__pycache__/**
+**/*.pyc
+**/*.pyo
+runtime/**
+data/**
+vendor/**
+node_modules/**
+.venv/**
+.env*
+*.log
+*.edb
+*.db
+*.sqlite*

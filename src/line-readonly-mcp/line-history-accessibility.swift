@@ -44,7 +44,16 @@ func rect(_ element: AXUIElement) -> CGRect? {
     return CGRect(origin: point, size: size)
 }
 guard AXIsProcessTrusted() else { fail("accessibility_permission_required") }
-guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: "jp.naver.line.mac").first else {
+let projectRoot = ProcessInfo.processInfo.environment["LINE_CONTEXT_RELAY_ROOT"] ?? URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().path
+let targetFile = URL(fileURLWithPath: projectRoot).appendingPathComponent("runtime/line-target.json")
+var targetBundle = "jp.naver.line.mac"
+if FileManager.default.fileExists(atPath: targetFile.path) {
+    guard let data = try? Data(contentsOf: targetFile),
+          let target = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let bundle = target["bundle_id"] as? String, !bundle.isEmpty else { fail("invalid_target_configuration") }
+    targetBundle = bundle
+}
+guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: targetBundle).first else {
     fail("line_not_running")
 }
 let root = AXUIElementCreateApplication(app.processIdentifier)

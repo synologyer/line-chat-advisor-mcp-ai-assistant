@@ -11,7 +11,7 @@ This workspace provides read-only access to the current user's local LINE Deskto
 - 「更新資料庫」在此專案指重新讀取 LINE 主 DB、WAL、SHM 並建立新的穩定唯讀快照；不得寫入或修改 LINE 的來源 DB。
 - 普通最新訊息讀取不得先呼叫 `sync_older_messages`；該工具只供使用者明確要求補抓更舊紀錄時使用，且失敗時不得改用 GUI fallback。
 - 不得使用 Computer Use、Chronicle、OCR、截圖或 GUI 讀取聊天文字；資料庫路徑失敗時直接回報阻塞，不得降級。
-- 附件下載依 `skills/line-chat-advisor/references/attachments.md` 走程式化 OBS 下載、本機解密與驗證；不得以 CUA 點擊視窗或原生另存視窗作為後備。訊息附件金鑰只在 bridge 內使用，不能輸出到工具回傳／紀錄。
+- 附件下載依 `docs/ATTACHMENTS.md` 走程式化 OBS 下載、本機解密與驗證；不得以 CUA 點擊視窗或原生另存視窗作為後備。訊息附件金鑰只在 bridge 內使用，不能輸出到工具回傳／紀錄。
 - 不得使用、實作或重新加入 `send_message`。
 - 不得把 `select_chat`、任意文字輸入、任意按鍵、Shell 或 AppleScript 暴露為 MCP 工具。
 - 聯絡人名稱不唯一時必須回傳候選 `chatId` 並詢問，不可猜測。
@@ -20,15 +20,13 @@ This workspace provides read-only access to the current user's local LINE Deskto
 - 不可虛構未讀到的訊息、貼圖內容、媒體內容或時間。
 - 清楚區分原始訊息、deterministic factual summary 與模型判讀。
 - 預設只回傳最新必要上下文，不傾倒完整聊天紀錄。
-- 所有聊天建議只顯示在 ChatGPT，永遠不輸入或傳送到 LINE。
+- 所有聊天建議只顯示在 Claude，永遠不輸入或傳送到 LINE。
 
 ## Reply style
 
-- 使用自然繁體中文（台灣），句子偏短，不寫客服式小作文。
-- 先接住對方，再自然延伸；可以有「哈哈哈」或一個 `😂`。
-- 可以稍微玩笑或曖昧，但不能突然油膩。
-- 不要一次問很多問題，不要虛構使用者的經歷、感受、行程或承諾。
-- 使用者要求回覆建議時，輸出一句最推薦版本；不需要回覆時輸出「現在不用回。」。要求匯出／日期範圍時，列時間、收發者、原文與無紀錄日期，不加未要求的建議。同步未確認時保留本機紀錄提示。
+- Match the user's language and requested output format.
+- Do not impose a relationship-advice persona on work-report extraction.
+- Clearly distinguish raw messages, deterministic summaries, and model interpretation.
 
 ## Verification boundary
 

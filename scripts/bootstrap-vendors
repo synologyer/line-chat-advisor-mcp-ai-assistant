@@ -36,6 +36,9 @@ clone_pinned() {
 
 clone_pinned line-cua-mcp https://github.com/kenghuaku/line-cua-mcp.git f83d70fcae9a6daa350909053017af9f6794d59c
 clone_pinned local-chat-memory https://github.com/cyakkunnlove/local-chat-memory.git 81204951a7c4ff0147417d8a149c3cbddd3ce3d3
-clone_pinned Peekaboo https://github.com/openclaw/Peekaboo.git ed641fb44acbc06217399787b5dae7de0cb6cb84 submodules
+# GUI wake-up is optional. Claude defaults to passive local snapshots.
+if [[ ${LINE_RELAY_BUILD_GUI:-0} == 1 ]]; then
+  clone_pinned Peekaboo https://github.com/openclaw/Peekaboo.git ed641fb44acbc06217399787b5dae7de0cb6cb84 submodules
+fi
 
 print '{"ok":true,"vendorsPinned":true,"vendorCodeExecuted":false}'

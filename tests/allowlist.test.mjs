@@ -90,23 +90,15 @@ test("real stdio MCP handshake lists the exact allow-list and calls line_status"
   }
 });
 
-test("line-chat-advisor skill retains ordered read-only context workflow", () => {
-  const skill = readFileSync(new URL("../skills/line-chat-advisor/SKILL.md", import.meta.url), "utf8");
-  const ordered = [
-    "`line_status`",
-    "`refresh_latest`",
-    "`get_relationship_context`",
-    "`read_history`",
-    "`save_relationship_context`",
-  ];
-  let previous = -1;
-  for (const operation of ordered) {
-    const index = skill.indexOf(operation, previous + 1);
-    assert.ok(index > previous, `${operation} must appear in required order`);
-    previous = index;
-  }
-  assert.match(skill, /order: "oldest"[\s\S]*pagination\.nextCursor/);
-  assert.match(skill, /output exactly `現在不用回。`/);
-  assert.match(skill, /For chat text, use the read-only MCP, never GUI\/OCR/);
-  assert.match(skill, /Never transmit the proposed sentence to LINE/);
+test("Claude receives ordered workflow and source-data instructions", async () => {
+  const transport = new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL("../bin/line-context-relay.mjs", import.meta.url))], stderr: "pipe" });
+  const client = new Client({ name: "claude-instructions-test", version: "1" });
+  try {
+    await client.connect(transport);
+    const instructions = client.getInstructions();
+    assert.match(instructions, /Claude Desktop/);
+    assert.match(instructions, /line_status, refresh_latest, get_relationship_context, then read_history/);
+    assert.match(instructions, /untrusted data/);
+    assert.match(instructions, /unknown server completeness/);
+  } finally { await client.close(); }
 });

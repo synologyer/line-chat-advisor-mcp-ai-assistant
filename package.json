@@ -1,11 +1,11 @@
 {
-  "name": "line-context-relay",
-  "version": "0.2.0",
-  "description": "Local-first, read-only LINE conversation advice for ChatGPT/Codex on macOS.",
+  "name": "claude-line-readonly",
+  "version": "0.3.0",
+  "description": "Claude Desktop read-only connector for an explicitly configured local LINE account on macOS.",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/LEO0047/line-chat-advisor-mcp-ai-assistant.git"
+    "url": "git+https://github.com/synologyer/line-chat-advisor-mcp-ai-assistant.git"
   },
   "type": "module",
   "scripts": {
@@ -28,9 +28,9 @@
   "cpu": [
     "arm64"
   ],
-  "homepage": "https://github.com/LEO0047/line-chat-advisor-mcp-ai-assistant#readme",
+  "homepage": "https://github.com/synologyer/line-chat-advisor-mcp-ai-assistant#readme",
   "bugs": {
-    "url": "https://github.com/LEO0047/line-chat-advisor-mcp-ai-assistant/issues"
+    "url": "https://github.com/synologyer/line-chat-advisor-mcp-ai-assistant/issues"
   },
   "files": [
     "src/line-readonly-mcp/*.mjs",
@@ -38,8 +38,6 @@
     "src/key-capture/*.py",
     "src/key-capture/*.swift",
     "src/key-capture/*.plist",
-    "scripts/*",
-    "skills/line-chat-advisor/SKILL.md",
     "tests/*.mjs",
     "tests/*.py",
     "requirements.lock",
@@ -57,13 +55,23 @@
     "requirements-attachments.in",
     "requirements-attachments.lock",
     "src/line-readonly-mcp/*.swift",
-    "skills/line-chat-advisor/references/*.md",
-    "HISTORY-UI-TROUBLESHOOTING.md"
+    "HISTORY-UI-TROUBLESHOOTING.md",
+    "docs/*.md",
+    "AGENTS.md",
+    "scripts/*.py",
+    "scripts/*.mjs",
+    "scripts/bootstrap",
+    "scripts/bootstrap-vendors",
+    "scripts/doctor",
+    "scripts/build-keychain-helper",
+    "scripts/build-history-helper",
+    "scripts/build-peekaboo"
   ],
   "publishConfig": {
     "access": "public"
   },
   "bin": {
     "line-context-relay": "bin/line-context-relay.mjs"
-  }
+  },
+  "private": true
 }

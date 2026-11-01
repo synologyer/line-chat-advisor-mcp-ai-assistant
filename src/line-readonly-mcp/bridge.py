@@ -34,12 +34,18 @@ from typing import Any, Iterator
 
 
 ROOT = Path(os.environ.get("LINE_CONTEXT_RELAY_ROOT", Path(__file__).resolve().parents[2])).resolve()
-LINE_DB_DIR = (
+# Local, ignored metadata only. Database keys remain exclusively in Keychain.
+TARGET_CONFIG = ROOT / "runtime" / "line-target.json"
+TARGET = json.loads(TARGET_CONFIG.read_text()) if TARGET_CONFIG.is_file() else {}
+LINE_DB_DIR = Path(TARGET["db_dir"]) if TARGET else (
     Path.home()
     / "Library/Containers/jp.naver.line.mac/Data/Library/Containers/jp.naver.line/Data/db"
 )
+LINE_DB_FILENAME = TARGET.get("db_filename")
 KEYCHAIN_SERVICE = "line-cua-mcp-dbkey"
-LINE_BUNDLE_ID = "jp.naver.line.mac"
+LINE_BUNDLE_ID = TARGET.get("bundle_id", "jp.naver.line.mac")
+LINE_APP_PATH = TARGET.get("app_path", "/Applications/LINE.app")
+PASSIVE_ONLY = TARGET.get("passive_only", True) is True
 MEMORY_DB = ROOT / "data" / "local-chat-memory.sqlite3"
 SNAPSHOT_PARENT = ROOT / "runtime" / "snapshots"
 LAST_CHAT_STATE = ROOT / "runtime" / "last-chat.json"
@@ -110,8 +116,18 @@ def source_signature(db: Path | None = None) -> tuple[tuple[str, tuple[int, int,
 
 def detect_db(db_dir: Path = LINE_DB_DIR) -> Path:
     """Return the single main DB, supporting both qwb* and current qw* names."""
+    if db_dir == LINE_DB_DIR and not TARGET:
+        raise BridgeError("target_not_configured", "Configure an explicit LINE app and account before reading.")
     if not db_dir.is_dir():
         raise BridgeError("db_directory_missing", "LINE database directory is not present.")
+    if LINE_DB_FILENAME and db_dir == LINE_DB_DIR:
+        selected = Path(LINE_DB_FILENAME)
+        if selected.name != LINE_DB_FILENAME or not LINE_DB_FILENAME.startswith("qw") or not LINE_DB_FILENAME.endswith(".edb") or "_" in LINE_DB_FILENAME:
+            raise BridgeError("db_target_invalid", "Invalid selected database filename.")
+        path = db_dir / selected
+        if not path.is_file():
+            raise BridgeError("db_target_missing", "The explicitly selected database is unavailable; no fallback.")
+        return path
     candidates = []
     for path in db_dir.glob("qw*.edb"):
         name = path.name
@@ -832,6 +848,9 @@ def save_relationship_context_operation(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def line_running() -> bool:
+    if TARGET:
+        result = subprocess.run(["/bin/ps", "-axo", "comm="], capture_output=True, text=True, timeout=5)
+        return any(line.strip() == str(Path(LINE_APP_PATH) / "Contents/MacOS/LINE") for line in result.stdout.splitlines())
     result = subprocess.run(["/usr/bin/pgrep", "-x", "LINE"], capture_output=True, text=True, timeout=5)
     return result.returncode == 0
 
@@ -850,7 +869,7 @@ def line_status() -> dict[str, Any]:
         "ok": True,
         "lineRunning": line_running(),
         "dbFound": False,
-        "keyAvailable": keychain_available(),
+        "keyAvailable": False,
         "decryptOk": False,
     }
     try:
@@ -859,6 +878,7 @@ def line_status() -> dict[str, Any]:
     except BridgeError as error:
         result["databaseError"] = error.code
         return result
+    result["keyAvailable"] = keychain_available()
     if not result["keyAvailable"]:
         return result
     try:
@@ -1333,7 +1353,7 @@ def focus_line_window(timeout: int) -> dict[str, Any]:
             "app",
             "switch",
             "--to",
-            "LINE",
+            LINE_BUNDLE_ID if TARGET else "LINE",
             "--verify",
             "--json",
             "--no-remote",
@@ -1427,7 +1447,7 @@ def refresh_latest_operation(args: dict[str, Any]) -> dict[str, Any]:
             ),
         }
 
-    if graphical_session_available() is False:
+    if PASSIVE_ONLY or graphical_session_available() is False:
         # Keep observing for the remainder of the requested window. A locked
         # graphical session does not prevent a stable local DB read.
         advanced, after, global_after, _signature = poll_target_advance(
@@ -1435,7 +1455,7 @@ def refresh_latest_operation(args: dict[str, Any]) -> dict[str, Any]:
         )
         return {
             "ok": True,
-            "activationSkipped": "locked_session",
+            "activationSkipped": "configured_passive_only" if PASSIVE_ONLY else "locked_session",
             **refresh_result(
                 chat=chat,
                 strategy="passive",

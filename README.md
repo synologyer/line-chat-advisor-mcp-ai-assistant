@@ -1,363 +1,97 @@
-# LINE Context Relay
+# Claude LINE Readonly
 
-**LINE Context Relay — Read-only AI Chat Advisor for ChatGPT, Codex and MCP Agents**<br>
-**LINE Context Relay — 給 ChatGPT、Codex 與 MCP Agent 使用的唯讀 LINE 聊天顧問**
+在 Claude 桌面 App 中读取 Mac 上个人 LINE 或 LINE 分身的聊天记录，不需要手动转发，也不使用官方账号机器人。
 
-[繁體中文](#繁體中文) · [English](#english) · [Security](SECURITY.md) · [Privacy](PRIVACY.md) · [MIT License](LICENSE)
+这是基于 [LINE Context Relay](https://github.com/LEO0047/line-chat-advisor-mcp-ai-assistant) 的 Claude 专用 fork，与 LINE、Anthropic 均无官方关联。**没有发送消息、任意键盘输入、Shell 或截图读取工具。**
 
-A local-first, read-only LINE conversation assistant for macOS. It connects
-ChatGPT/Codex to LINE Desktop's local encrypted database through a narrowly
-allow-listed MCP server, refreshes the target chat using database evidence,
-builds private relationship context, and suggests whether and how to reply.
+## 当前能力
 
-**It never sends a LINE message.**
+- 明确选择要读取的 LINE App、Bundle ID 和账户数据库，支持独立分身。
+- 通过主数据库及 WAL/SHM 的稳定副本读取；只打开副本，启用 read-only/query-only。
+- 列出会话、分页读历史、本机聊天上下文、附件信息及显式附件下载。
+- 默认仅刷新本机数据库快照，不切换窗口、不唤醒或重启 LINE。
+- 密钥只从 macOS Login Keychain 获取，不允许明文配置或环境变量密钥。
+- Claude 连接时会收到“状态 → 刷新 → 上下文 → 历史”的工作流程和不执行聊天指令的要求。
 
-> Unofficial community project. Not affiliated with, endorsed by, or sponsored
-> by LINE Corporation or OpenAI. Use only with your own account and data, and
-> review the relevant product terms before use.
+**本机记录不等于服务器全部历史。** 未同步或未下载到 Mac 的消息不能凭空读取，`freshnessVerified=false`、`syncComplete=null` 不应解读为已完成服务器同步。把内容交给 Claude 分析时，返回的正文会进入其模型服务。
 
-> 套件安裝與限制：[INSTALL.md](INSTALL.md) · 維護與發布：[MAINTAINERS.md](MAINTAINERS.md)。npm 發布與外部採用尚未完成。
+## 环境与验证范围
 
-## English
+- Apple Silicon macOS，Node.js 20+，Homebrew Python 3.14，Xcode Command Line Tools。
+- Python 加密数据库依赖通过 hash 固定；Intel、其他 Python 版本未验证。
+- 已在 LINE 26.5.0 的独立分身上验证数据库解密、Claude MCP 配置和完整单条历史读取。
+- 改进了候选扫描顺序，并限制最多 30 秒、256 MiB 读取。限制可能漏掉密钥，不保证适用于所有版本或签名状态。
+- 已签名的分身并不保证能调试；工具拒绝时停止，不自动重新签名或关闭系统保护。
 
-### What this project does
-
-LINE Context Relay turns a Mac running LINE Desktop and ChatGPT/Codex into a
-private conversation-advice workflow:
-
-```mermaid
-flowchart LR
-    U["User or ChatGPT Remote"] --> C["ChatGPT / Codex on Mac"]
-    C --> M["Allow-listed line-readonly MCP"]
-    M --> S["Stable DB + WAL + SHM snapshot"]
-    S --> R["Bounded chat history"]
-    R --> X["Private local relationship context"]
-    X --> A["One reply decision or suggestion"]
-    A --> C
-```
-
-With ChatGPT Remote enabled in the user's desktop/mobile setup, a request can
-start from a phone, run on the paired Mac, read the local LINE context, and
-return a suggestion to ChatGPT. Remote availability, locked-computer behavior,
-and pairing depend on the installed ChatGPT version and must be verified on the
-user's own devices. The Mac must be powered on, online, and signed into a usable
-graphical session for LINE refresh actions.
-
-The project is intentionally an **advisor, not a bot that sends messages**.
-Reply text is displayed in ChatGPT/Codex only.
-
-### Core features
-
-- Stable copies of LINE's encrypted main DB and present WAL/SHM sidecars
-- `SQLITE_OPEN_READONLY` and `query_only` on the private snapshot only
-- Login Keychain-only database key retrieval
-- Exact display-name or `chatId` resolution; ambiguous names fail closed
-- Bounded history reads with stable timestamp/message-ID cursor pagination
-- Target-specific local snapshot refresh; server completeness remains unverified
-- First-full-then-incremental local relationship context
-- Optimistic context versions to prevent stale task overwrites
-- A global `line-chat-advisor` Codex skill
-- No send tool, generic input tool, arbitrary app target, OCR, screenshot, Shell
-  MCP, or AppleScript MCP
-
-### Safety architecture
-
-The MCP exposes exactly ten operations:
-
-| Tool | Purpose | Writes LINE source DB? |
-| --- | --- | --- |
-| `get_attachment_info` | Read bounded attachment metadata without keys | No |
-| `download_attachment` | Fetch from fixed LINE OBS host, verify and save under Downloads | No |
-| `line_status` | Verify DB discovery, Keychain access, decryption, and snapshot state | No |
-| `list_chats` | List recent exact chat candidates | No |
-| `read_history` | Read bounded history and deduplicate it into private local memory | No |
-| `refresh_latest` | Passively poll, then activate or launch only LINE if needed | No |
-| `get_relationship_context` | Read private local semantic context | No |
-| `save_relationship_context` | Save bounded context to local memory with cursor/version checks | No |
-| `sync_older_messages` | Optional, constrained older-history backfill; not used for normal reads | No |
-| `line_health` | Return redacted diagnostics | No |
-
-`read_history` and `save_relationship_context` may write to the ignored local
-memory database. They never modify LINE's source DB. See [PRIVACY.md](PRIVACY.md)
-and [AUDIT.md](AUDIT.md) for the detailed boundary.
-
-### Requirements
-
-- macOS with LINE Desktop installed and signed in
-- ChatGPT desktop with Codex/MCP support
-- Node.js 20 or later
-- Homebrew Python 3.14 compatible with the pinned `apsw-sqlite3mc` wheel
-- Xcode Command Line Tools, Swift, LLDB, and Git
-- macOS Login Keychain access
-- Accessibility permission for the pinned local Peekaboo build; Screen Recording
-  may also be requested by Peekaboo even though ordinary chat text comes from
-  the DB, not screenshots
-- Optional: ChatGPT Remote paired between the phone and Mac
-
-### Installation
+## 快速开始
 
 ```bash
-git clone https://github.com/LEO0047/line-chat-advisor-mcp-ai-assistant.git
+git clone https://github.com/synologyer/line-chat-advisor-mcp-ai-assistant.git
 cd line-chat-advisor-mcp-ai-assistant
 scripts/bootstrap
-scripts/build-peekaboo
-scripts/build-history-helper
 ```
 
-`scripts/bootstrap` clones the three commits in [VENDOR_LOCK.md](VENDOR_LOCK.md)
-without executing vendor code, installs hash-pinned Python and lockfile-pinned
-Node dependencies, and runs the tests. `scripts/build-peekaboo` separately
-builds only the reviewed Peekaboo commit into the ignored `runtime/` directory.
+`bootstrap` 安装固定依赖并运行测试，不提取密钥、读聊天或修改 LINE。默认不编译可选的窗口激活组件。
 
-`scripts/build-history-helper` builds the project's bounded native AX adapter.
-Historical backfill requires an already-open, focused chat with an exact window
-title and one identifiable message list. It sends wheel events only to LINE;
-it does not search, click results, read message text from UI, or use keys.
-If LINE omits the accessible message list, the operation stops explicitly.
-The Codex computer tool can open/scroll an exact chat when available; actual
-text must still be read through `read_history`. Verify the oldest message and
-count after loading, not just a successful scroll. Server completeness remains
-unknown without an authoritative acknowledgement.
+### 1. 选择账户并配置 Claude
 
-For window-read timeouts, use the bounded diagnostic and recovery procedure in
-[Historical UI troubleshooting](HISTORY-UI-TROUBLESHOOTING.md). Keep window
-recovery, actual scrolling, and verified new history as separate results.
-
-Register the MCP in `~/.codex/config.toml`, replacing the placeholder with the
-absolute clone path:
-
-```toml
-[mcp_servers.line-readonly]
-command = "/opt/homebrew/bin/node"
-args = ["<absolute-project-path>/src/line-readonly-mcp/server.mjs"]
-```
-
-Install the global skill without copying private state:
+先在 Mac 打开本人要读取的 LINE App。把示例路径替换为实际应用：
 
 ```bash
-mkdir -p "$HOME/.codex/skills"
-ln -s "$(pwd)/skills/line-chat-advisor" "$HOME/.codex/skills/line-chat-advisor"
+# 只预览
+.venv/bin/python3 scripts/configure-claude.py --app '/Applications/仕事.app'
+# 确认后保存；已有的其他 Claude MCP 连接会保留
+.venv/bin/python3 scripts/configure-claude.py --app '/Applications/仕事.app' --apply
 ```
 
-Do not overwrite an existing skill path without reviewing it. Restart/reload
-ChatGPT/Codex after changing MCP or skill configuration.
+配置器从 Bundle ID 定位容器，并优先依据所选 App 实际打开的数据库确定账户。如果仍有多个候选，必须用 `--db-file 'qw....edb'` 明确指定，不会猜测。
 
-### One-time key capture
+### 2. 已有密钥则跳过；首次取密钥需单独确认
 
-LINE's local DB is encrypted. The project includes a deliberately isolated,
-user-assisted capture path that stores the validated key directly in Login
-Keychain and removes temporary artifacts:
+先在 Claude 询问 `line_status`。已有密钥且 `decryptOk=true` 时，不要重复扫描。
+
+首次无密钥时，请阅读 [安装与取钥指南](INSTALL.md)。当前入口对**正在运行的所选 LINE**进行调试扫描，可能短暂停顿或导致退出；不会修改签名、创建登录副本、发消息或索取管理员密码。
 
 ```bash
-scripts/prepare-key-capture
-# Sign in only to the visible temporary LINE copy.
-scripts/capture-key
-scripts/cleanup-key-capture   # safe to run again if cleanup is needed
+scripts/build-keychain-helper
+.venv/bin/python3 scripts/capture-work-key.py --confirm-debug-scan
 ```
 
-Read [SECURITY.md](SECURITY.md) and [AUDIT.md](AUDIT.md) first. Never paste the
-key into a terminal command, `.env`, issue, log, prompt, or repository. The
-technique may break after LINE/macOS updates and may be subject to LINE's terms;
-use it only on your own Mac and account.
+候选只有通过所选数据库的只读解密认证才会存入 Login Keychain，临时候选和调试日志会清除。拒绝访问或没找到有效密钥，就停止排查，不绕过验证。
 
-### Verify and run
+### 3. 在 Claude 中使用
+
+完全退出并重新打开 Claude，确认 `work-line-readonly` 连接可用，然后说：
+
+> 使用 work-line-readonly，检查连接状态并列出我的 LINE 群聊。
+>
+> 读取指定日报群今天的本机消息，按发言人和日期整理，不要发送任何消息。
+
+重名会返回候选 `chatId`，由你确认。大量消息应分页读取。自动定时读取和按群持久保存 CSV 不是当前连接自带的功能，需要另行配置。
+
+## 工具与本地数据
+
+十个受限工具：`line_status`、`line_health`、`list_chats`、`refresh_latest`、`get_relationship_context`、`read_history`、`save_relationship_context`、`get_attachment_info`、`download_attachment`、`sync_older_messages`。
+
+`sync_older_messages` 只供明确要求补载更旧记录时使用，需要另行构建的原生辅助工具、辅助功能授权和已打开的精确会话。普通读取不需要它。默认快照刷新不依赖 Peekaboo，也不保证完整同步。
+
+| 位置 | 用途 |
+| --- | --- |
+| `runtime/line-target.json` | 本机应用、账户库和 passive-only 设置 |
+| macOS Login Keychain：`line-cua-mcp-dbkey` | 已认证的数据库密钥 |
+| `runtime/snapshots/` | 操作期间的私有临时副本 |
+| `data/local-chat-memory.sqlite3` | 本机导入记录和上下文，不修改 LINE |
+| Claude 桌面配置 | `work-line-readonly` 启动路径 |
+
+这些运行目录及真实消息、数据库、候选、联系人、密钥不得上传 GitHub。当前钥匙串服务为单个活动账户设计；多个同时使用的不同账户需要另行扩展隔离，不能只复制目录就假设密钥互不影响。
+
+## 开发与来源
 
 ```bash
-npm run test
-scripts/doctor
-npm start
+npm test
+npm run check:package
 ```
 
-After reloading Codex, prompts such as these trigger the global skill:
+只使用人工数据的测试不会主动获取密钥。协议测试在未配置目标时不读取真实账户。完整安装、故障排查见 [INSTALL.md](INSTALL.md)，数据流见 [PRIVACY.md](PRIVACY.md)。
 
-```text
-Read the latest LINE messages from <exact contact name>, use the full
-relationship context, tell me whether I should reply, and if so give me only
-one reply in my style. Do not send it.
-```
-
-The skill requires this sequence:
-
-```text
-line_status → refresh_latest → get_relationship_context → read_history
-            → save_relationship_context
-```
-
-`ok: true` and `localSnapshotRefreshed: true` permit reading the refreshed local
-snapshot. While locked, the bridge polls passively for the requested window or
-until the target advances, without UI actions. `targetAdvanced` only records
-local message progress, which may be outgoing. Neither app activation nor local
-changes prove server completeness: `freshnessVerified` is now always false,
-with `syncComplete: null` and `serverWatermark: null` until an authoritative
-server acknowledgement is available. Consumers of the older freshness flag
-must use `localSnapshotRefreshed` for local-read success instead.
-
-Results report snapshot time, latest target-message time, and unverified server
-sync. DB/key/snapshot failures still stop the read. Date-range requests return
-transcripts; reply-advice requests return a short suggestion when appropriate.
-
-The documented [LINE Messaging API](https://developers.line.biz/en/docs/messaging-api/receiving-messages/)
-receives messages for Official Accounts through webhooks; it is not a private
-Desktop-chat synchronization acknowledgement or backfill interface for this
-bridge. Its documentation also says received text cannot be fetched again by
-API. No server completeness guarantee is implemented here.
-
-### Repository contents
-
-- `src/line-readonly-mcp/` — Python DB bridge and Node MCP server
-- `src/key-capture/` — isolated Keychain/key-validation helpers
-- `skills/line-chat-advisor/` — global Codex skill source
-- `scripts/` — bootstrap, build, doctor, capture, and cleanup commands
-- `tests/` — Python and real stdio MCP tests
-- `AUDIT.md` — upstream security review
-- `VENDOR_LOCK.md` — source URLs and reviewed commits
-- `ACCEPTANCE.md` — sanitized verification status
-
-Dependencies, vendor working copies, build outputs, databases, snapshots,
-screenshots, logs, keys, local memory, and contact material are intentionally
-excluded from Git. They are recreated locally or remain private.
-
-### Development
-
-```bash
-npm run test
-scripts/doctor
-git diff --check
-```
-
-Before changing a vendor pin, repeat the security audit. Never add a message
-send path or a generic GUI/keyboard tool to the MCP allow-list.
-
-### License
-
-Original code in this repository is released under the [MIT License](LICENSE).
-Fetched upstream projects remain under their own licenses. Their source,
-license, and reviewed commit are listed in [VENDOR_LOCK.md](VENDOR_LOCK.md).
-
----
-
-## 繁體中文
-
-### 這是什麼
-
-LINE Context Relay 是 macOS 上的本機優先、唯讀 LINE 聊天輔助機器人。
-它透過受限 MCP 讓 ChatGPT/Codex 讀取 LINE Desktop 的本機加密資料庫，先用
-DB 證據刷新精確目標聊天室，再結合完整關係脈絡，判斷現在該不該回；需要回覆
-時只提供一句最像使用者的版本。
-
-**本專案永遠不會傳送 LINE 訊息。** 建議只顯示在 ChatGPT/Codex。
-
-若使用者的 ChatGPT 桌面版與手機已啟用並配對 ChatGPT Remote，可以由手機送出
-任務，讓配對的 Mac 執行本機 LINE 讀取，再把建議帶回 ChatGPT。Remote、Locked
-Use 與鎖定畫面下的實際可用性會隨版本與裝置狀態改變，必須在自己的設備實測；
-Mac 仍需開機、連網，且已登入可用的圖形工作階段。
-
-### 主要能力
-
-- 對 LINE 主 DB、WAL、SHM 建立穩定私人副本
-- 只用 `SQLITE_OPEN_READONLY` 與 `query_only` 開啟副本
-- 解密金鑰只從 macOS Login Keychain 取得
-- 精確名稱／`chatId` 解析，重名就停止而不是猜測
-- 有上限的歷史讀取與 timestamp/message-ID cursor 分頁
-- 以目標聊天室 DB 前進證據判定最新同步
-- 第一次完整讀取，之後依 cursor 增量更新關係脈絡
-- context version 防止不同 Codex task 互相覆蓋新版摘要
-- 全域 `line-chat-advisor` skill
-- 沒有 `send_message`、通用輸入、任意 app、OCR、截圖、Shell MCP 或
-  AppleScript MCP
-
-### 安全資料流
-
-一般讀取固定依序執行：
-
-```text
-line_status → refresh_latest → get_relationship_context → read_history
-            → save_relationship_context
-```
-
-`refresh_latest` 以 `localSnapshotRefreshed` 表示已取得本機穩定唯讀快照；
-鎖屏時會持續被動檢查至指定期限或目標前進。`targetAdvanced` 僅表示本機目標
-紀錄前進，不能證明伺服器同步完整；`freshnessVerified` 保持 false，
-`syncComplete` 與 `serverWatermark` 保持 null。輸出會附讀取時間與同步未確認提示，
-不因鎖屏阻擋本機讀取；DB／金鑰／快照失敗仍停止。`read_history` 與
-`save_relationship_context` 只會寫入被 Git 忽略、權限為 `0600` 的本機記憶，
-永遠不會修改 LINE 來源 DB。
-
-### 安裝
-
-```bash
-git clone https://github.com/LEO0047/line-chat-advisor-mcp-ai-assistant.git
-cd line-chat-advisor-mcp-ai-assistant
-scripts/bootstrap
-scripts/build-peekaboo
-```
-
-`scripts/bootstrap` 會依 [VENDOR_LOCK.md](VENDOR_LOCK.md) 下載三個經審查的固定
-commit，不執行 vendor 程式，接著安裝 lockfile／hash 鎖定依賴並跑測試。
-Peekaboo 必須用獨立指令明確建置，產物只放在被忽略的 `runtime/`。
-
-在 `~/.codex/config.toml` 註冊 MCP：
-
-```toml
-[mcp_servers.line-readonly]
-command = "/opt/homebrew/bin/node"
-args = ["<專案絕對路徑>/src/line-readonly-mcp/server.mjs"]
-```
-
-安裝全域 skill：
-
-```bash
-mkdir -p "$HOME/.codex/skills"
-ln -s "$(pwd)/skills/line-chat-advisor" "$HOME/.codex/skills/line-chat-advisor"
-```
-
-修改 MCP 或 skill 後必須重新載入 ChatGPT/Codex，已開啟的 task 不會自動更新
-啟動時載入的工具清單。
-
-### 一次性金鑰擷取
-
-LINE 本機 DB 有加密。專案提供隔離、需要使用者配合的一次性流程，驗證後直接
-把金鑰寫入 Login Keychain，並刪除暫存檔：
-
-```bash
-scripts/prepare-key-capture
-# 只登入畫面上可見的暫時 LINE 副本
-scripts/capture-key
-scripts/cleanup-key-capture
-```
-
-執行前請完整閱讀 [SECURITY.md](SECURITY.md) 與 [AUDIT.md](AUDIT.md)。金鑰不可
-放入命令列、`.env`、Issue、log、prompt 或 Git。這項技術可能因 LINE/macOS 更新
-失效，也可能受到 LINE 使用條款限制；只能用於自己的 Mac、帳號與資料。
-
-### 驗證與使用
-
-```bash
-npm run test
-scripts/doctor
-npm start
-```
-
-重新載入 Codex 後，可使用：
-
-```text
-讀取 LINE：<聯絡人精確名稱> 的最近訊息，結合完整關係脈絡，告訴我現在該不該回；
-需要回覆時只給我一句最像我的版本，不要傳送。
-```
-
-需要回覆時只會輸出一句建議；不需要時只輸出 `現在不用回。`；刷新或安全條件
-不成立時只回報阻塞原因，不會改用 Computer Use、OCR 或舊快照。
-
-### 隱私與公開範圍
-
-以下內容永遠不進 Git：LINE DB/WAL/SHM、Keychain 金鑰、擷取候選值、聊天內容、
-chatId、聯絡人名稱、截圖、OCR、log、本機 memory、dependency tree、vendor working
-copy、binary 與 build artifacts。詳細規則見 [PRIVACY.md](PRIVACY.md)。
-
-### 授權
-
-本 repo 的原創程式採 [MIT License](LICENSE)。透過 bootstrap 下載的第三方專案
-仍使用各自授權；來源、license 與固定 commit 請見
-[VENDOR_LOCK.md](VENDOR_LOCK.md)。
-
-本專案是非官方社群工具，與 LINE Corporation、OpenAI 無隸屬、贊助或背書關係。
+保留原项目的 [MIT 许可证](LICENSE)、[安全说明](SECURITY.md) 和 Git 贡献历史。上游的 [AUDIT.md](AUDIT.md)、[ACCEPTANCE.md](ACCEPTANCE.md)、[VENDOR_LOCK.md](VENDOR_LOCK.md) 是历史审计材料，不代表本 fork 的所有改动或其他环境已获同样验证。

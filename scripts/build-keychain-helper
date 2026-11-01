@@ -1,0 +1,7 @@
+#!/bin/zsh
+set -euo pipefail
+project_root=${0:A:h:h}
+mkdir -p "$project_root/runtime/bin"
+/usr/bin/swiftc -O -framework Security "$project_root/src/key-capture/KeychainStore.swift" -o "$project_root/runtime/bin/keychain-store"
+chmod 700 "$project_root/runtime/bin/keychain-store"
+print 'Keychain helper built. No keys were read or stored.'

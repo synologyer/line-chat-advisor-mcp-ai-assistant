@@ -1,16 +1,6 @@
-# Security Policy / 安全政策
+# Security policy
 
-## Reporting a vulnerability
-
-Do not open a public issue containing a LINE database, key, chat transcript,
-account identifier, screenshot, or exploit details. Use GitHub's private
-security-advisory form:
-
-https://github.com/LEO0047/line-chat-advisor-mcp-ai-assistant/security/advisories/new
-
-Include the affected version/commit, reproduction steps using synthetic data,
-and the expected security boundary. Remove all personal data before attaching
-logs.
+Report fork-specific problems privately to the repository owner. Do not publish keys, database snapshots, account identifiers or transcripts in issues. Source project advisories: https://github.com/LEO0047/line-chat-advisor-mcp-ai-assistant/security/advisories/new
 
 ## Security boundaries
 

@@ -42,6 +42,9 @@ class BridgeTests(unittest.TestCase):
             bridge.attachment_info(c, "chat-a", "m1")
 
     def setUp(self):
+        mode_patch = mock.patch.object(bridge, "PASSIVE_ONLY", False)
+        mode_patch.start()
+        self.addCleanup(mode_patch.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
 
@@ -50,7 +53,7 @@ class BridgeTests(unittest.TestCase):
 
     def test_line_db_path_is_home_relative_without_private_username(self):
         self.assertEqual(bridge.LINE_DB_DIR.parts[-8:], (
-            "Library", "Containers", "jp.naver.line.mac", "Data",
+            "Library", "Containers", bridge.LINE_BUNDLE_ID, "Data",
             "Library", "Containers", "jp.naver.line", "Data", "db",
         )[-8:])
         source = (PROJECT / "src/line-readonly-mcp/bridge.py").read_text(encoding="utf-8")
@@ -71,6 +74,31 @@ class BridgeTests(unittest.TestCase):
         with self.assertRaises(bridge.BridgeError) as caught:
             bridge.detect_db(self.root)
         self.assertEqual(caught.exception.code, "db_ambiguous")
+
+    def test_unconfigured_account_never_reads_keychain_or_default_database(self):
+        with mock.patch.object(bridge, "TARGET", {}), mock.patch.object(bridge, "keychain_available", side_effect=AssertionError("Must not access Keychain")):
+            result = bridge.line_status()
+        self.assertFalse(result["dbFound"])
+        self.assertFalse(result["keyAvailable"])
+        self.assertFalse(result["decryptOk"])
+        self.assertEqual(result["databaseError"], "target_not_configured")
+
+    def test_explicit_clone_database_does_not_guess_another_account(self):
+        chosen = self.root / "qw111.edb"
+        chosen.write_bytes(b"one")
+        (self.root / "qw222.edb").write_bytes(b"two")
+        with mock.patch.object(bridge, "TARGET", {"configured": True}), mock.patch.object(bridge, "LINE_DB_DIR", self.root), mock.patch.object(bridge, "LINE_DB_FILENAME", chosen.name):
+            self.assertEqual(bridge.detect_db(self.root), chosen)
+            chosen.unlink()
+            with self.assertRaises(bridge.BridgeError) as caught:
+                bridge.detect_db(self.root)
+            self.assertEqual(caught.exception.code, "db_target_missing")
+
+    def test_explicit_clone_database_rejects_traversal(self):
+        with mock.patch.object(bridge, "TARGET", {"configured": True}), mock.patch.object(bridge, "LINE_DB_DIR", self.root), mock.patch.object(bridge, "LINE_DB_FILENAME", "../qw111.edb"):
+            with self.assertRaises(bridge.BridgeError) as caught:
+                bridge.detect_db(self.root)
+            self.assertEqual(caught.exception.code, "db_target_invalid")
 
     def test_snapshot_copies_sidecars_without_modifying_source_and_cleans(self):
         db = self.root / "qw123.edb"
@@ -732,6 +760,21 @@ class BridgeTests(unittest.TestCase):
         focus.assert_called_once()
         launch.assert_not_called()
 
+    def test_configured_passive_clone_refresh_does_not_activate_either_app(self):
+        chat = {"chatId": "u1", "name": "Exact", "isGroup": False}
+        before = self.refresh_state(100, "m1")
+        with mock.patch.object(bridge, "PASSIVE_ONLY", True), mock.patch.object(
+            bridge, "read_refresh_snapshot", return_value=(chat, before, 10, ())
+        ), mock.patch.object(bridge, "poll_target_advance", return_value=(False, before, 10, ())), mock.patch.object(
+            bridge, "focus_line_window", side_effect=AssertionError("No UI activation")
+        ), mock.patch.object(bridge, "launch_line", side_effect=AssertionError("No launch")):
+            result = bridge.refresh_latest_operation({"chat": "Exact", "timeoutSeconds": 5})
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["localSnapshotRefreshed"])
+        self.assertEqual(result["activationSkipped"], "configured_passive_only")
+        self.assertFalse(result["freshnessVerified"])
+        self.assertIsNone(result["syncComplete"])
+
     def test_locked_session_reads_local_snapshot_through_full_deadline_without_ui(self):
         chat = {"chatId": "u1", "name": "Exact", "isGroup": False}
         before = self.refresh_state(100, "m1")
@@ -808,7 +851,7 @@ class BridgeTests(unittest.TestCase):
             bridge.launch_line(8)
             launch_command = run.call_args.args[0]
 
-        self.assertEqual(focus_command[1:5], ["app", "switch", "--to", "LINE"])
+        self.assertEqual(focus_command[1:5], ["app", "switch", "--to", bridge.LINE_BUNDLE_ID if bridge.TARGET else "LINE"])
         self.assertIn("--verify", focus_command)
         self.assertNotIn("--cycle", focus_command)
         self.assertEqual(

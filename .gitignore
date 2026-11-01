@@ -48,3 +48,8 @@ scan-status.json
 .DS_Store
 .idea/
 .vscode/
+
+# Also ignore development symlinks to installed runtimes.
+/.venv
+/node_modules
+/vendor
